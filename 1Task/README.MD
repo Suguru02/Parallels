@@ -1,20 +1,18 @@
 # Задание 1  
 ## Сборка  
 
-'''
-mkdir build
-cd build
-
-'''
-
 ### Float  
 ```  
+mkdir build
+cd build
 cmake .. -DUSE_DOUBLE=OFF
 cmake --build . --config Release
 ./first_task
 ```  
 ### Double  
 ```  
+mkdir build
+cd build
 cmake .. -DUSE_DOUBLE=ON
 cmake --build . --config Release
 ./first_task
