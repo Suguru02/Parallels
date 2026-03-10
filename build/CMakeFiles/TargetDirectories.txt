@@ -1,0 +1,3 @@
+/home/haruto/Загрузки/Рабочий стол/Паралельки/build/CMakeFiles/first_task.dir
+/home/haruto/Загрузки/Рабочий стол/Паралельки/build/CMakeFiles/edit_cache.dir
+/home/haruto/Загрузки/Рабочий стол/Паралельки/build/CMakeFiles/rebuild_cache.dir
