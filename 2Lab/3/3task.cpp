@@ -1,7 +1,5 @@
 #include <iostream>
 #include <omp.h>
-#include <cstdio>
-#include <inttypes.h> 
 #include <cmath>
 #include <string>
 #include <chrono>
