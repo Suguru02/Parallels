@@ -1,64 +1,84 @@
 #include <iostream>
 #include <omp.h>
+#include <cstdio>
+#include <vector>
+#include <inttypes.h> 
 #include <cmath>
 #include <string>
 #include <chrono>
-#include <vector>
 #include <fstream>
+#include <numeric>
+#include <cstdlib>
 
-
-#define MAX_ITERATION 10000
-#define EPSILON 1e-5
+#define EPS 1e-5
+#define MAX_ITER 10000
 #define N 1000
+#define NUM_RUNS 100
+
+using TYPE = std::vector<double>;
 
 
-void solve_linear_system_v1(const std::vector<double>& A, std::vector<double> x, std::vector<double>& b, int threads_num)
-{
+void init(TYPE& A, TYPE& b){
+    A.resize(N * N);
+    b.resize(N);
+
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++){
+            if(i == j) 
+                A[i * N + j] = 2.0;
+            else 
+                A[i * N + j] = 1.0;
+        }
+    } 
+
+    for (int j = 0; j < N; j++)
+        b[j] = static_cast<double>(N+1);
+}
+
+void solve_linear_system_v1(const TYPE& A, TYPE& x, const TYPE& b, int num_threads){   
     double tau = 0.01;
-    {
-        for (int itr = 0; itr < MAX_ITERATION; itr++) {
-            std::vector<double> Ax(N, 0.0);
-            #pragma omp parallel for num_threads(threads_num)
-            for (int i = 0; i < N; i++) {
-                for (int j = 0; j < N; j++) {
-                    Ax[i] += A[i * N + j] * x[j];
-                }
+    TYPE Ax(N);
+    for (int iter = 0; iter < MAX_ITER; iter++) {
+        std::fill(Ax.begin(), Ax.end(), 0.0);
+        
+        #pragma omp parallel for num_threads(num_threads)
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                Ax[i] += A[i * N + j] * x[j];
             }
+        }
 
-            #pragma omp parallel for num_threads(threads_num)
-            for (int i = 0; i < N; i++) {
-                x[i] = x[i] - tau * (Ax[i] - b[i]);
-            }
+        #pragma omp parallel for num_threads(num_threads)
+        for (int i = 0; i < N; i++) {
+            x[i] = x[i] - tau * (Ax[i] - b[i]);
+        }
 
-    
-            double error_norm_sq = 0.0;
-            #pragma omp parallel for reduction(+:error_norm_sq) num_threads(threads_num)
-            for (int i = 0; i < N; i++) {
-                double diff = tau * (Ax[i] - b[i]);
-                error_norm_sq += diff * diff;
-            }
-            
-            if (sqrt(error_norm_sq) < EPSILON) {
-                break;
-            }
-        }  
+        double global_diff_norm = 0.0;
+        #pragma omp parallel for reduction(+:global_diff_norm) num_threads(num_threads)
+        for (int i = 0; i < N; i++) {
+            double diff = tau * (Ax[i] - b[i]);
+            global_diff_norm += diff * diff;
+        }
+        
+        if (std::sqrt(global_diff_norm) < EPS) {
+            break;
+        }
     }
 }
 
-void solve_linear_system_v2(const std::vector<double>& A, std::vector<double> x, std::vector<double>& b, int threads_num)
-{
+void solve_linear_system_v2(const TYPE& A, TYPE& x, const TYPE& b, int threads_num){
     double tau = 0.01;
     #pragma omp parallel num_threads(threads_num)
     {
         int nthreads = omp_get_num_threads();
         int threadid = omp_get_thread_num();
-
         int items_per_thread = N / nthreads;
         int lb = threadid * items_per_thread;
-        int ub = (threadid == nthreads - 1) ? (N - 1) : (lb + items_per_thread - 1);
+        int ub = (threadid == nthreads - 1) ? N : (lb + items_per_thread);
 
-        for (int itr = 0; itr < MAX_ITERATION; itr++) {
-            std::vector<double> Ax(N, 0.0);
+        for (int itr = 0; itr < MAX_ITER; itr++) {
+            TYPE Ax(N, 0.0);
+            
             for (int i = lb; i < ub; i++) {
                 for (int j = 0; j < N; j++) {
                     Ax[i] += A[i * N + j] * x[j];
@@ -66,6 +86,7 @@ void solve_linear_system_v2(const std::vector<double>& A, std::vector<double> x,
             }
 
             #pragma omp barrier
+            
             for (int i = lb; i < ub; i++) {
                 x[i] = x[i] - tau * (Ax[i] - b[i]);
             }
@@ -78,52 +99,52 @@ void solve_linear_system_v2(const std::vector<double>& A, std::vector<double> x,
                 double diff = tau * (Ax[i] - b[i]);
                 error_norm_sq += diff * diff;
             }
+            
             #pragma omp barrier
             
             #pragma omp single
-            if (sqrt(error_norm_sq) < EPSILON) {
-                break;
+            {
+                if (std::sqrt(error_norm_sq) < EPS) {
+                    itr = MAX_ITER;
+                }
             }
-
             #pragma omp barrier
         }  
     }
 }
 
-void solve_linear_system_v3(const std::vector<double>& A, std::vector<double>& x, std::vector<double>& b, int threads_num, std::string type, int chunk_size)
-{
+void solve_linear_system_v3(const TYPE& A, TYPE& x, const TYPE& b, 
+                           int num_threads, std::string type, int chunk_size){   
     bool converged = false;
     double tau = 0.01;
-    #pragma omp parallel num_threads(threads_num)
+    #pragma omp parallel num_threads(num_threads)
     {   
-        std::vector<double> Ax(N, 0.0);
-        for (int itr = 0; itr < MAX_ITERATION && !converged; itr++) {
+        TYPE Ax(N);
+        for (int iter = 0; iter < MAX_ITER && !converged; iter++) {
+            std::fill(Ax.begin(), Ax.end(), 0.0);
             
-            // === Этап 1: Вычисление Ax ===
-            if (type == "static") {
+            if (type == "static") { 
                 #pragma omp for schedule(static, chunk_size)
                 for (int i = 0; i < N; i++) {
-                    Ax[i] = 0.0;
                     for (int j = 0; j < N; j++)
                         Ax[i] += A[i * N + j] * x[j];
                 }
-            } else if (type == "dynamic") {
+            } 
+            else if (type == "dynamic") {
                 #pragma omp for schedule(dynamic, chunk_size)
                 for (int i = 0; i < N; i++) {
-                    Ax[i] = 0.0;
                     for (int j = 0; j < N; j++)
                         Ax[i] += A[i * N + j] * x[j];
                 }
-            } else if (type == "guided") {
+            } 
+            else if (type == "guided") {
                 #pragma omp for schedule(guided, chunk_size)
                 for (int i = 0; i < N; i++) {
-                    Ax[i] = 0.0;
                     for (int j = 0; j < N; j++)
                         Ax[i] += A[i * N + j] * x[j];
                 }
             }
             #pragma omp barrier
-
 
             if (type == "static") {
                 #pragma omp for schedule(static, chunk_size)
@@ -140,31 +161,30 @@ void solve_linear_system_v3(const std::vector<double>& A, std::vector<double>& x
             }
             #pragma omp barrier
     
-
-            double error_norm_sq = 0.0;
+            double global_diff_norm = 0.0;
             if (type == "static") {
-                #pragma omp for schedule(static, chunk_size) reduction(+:error_norm_sq)
+                #pragma omp for schedule(static, chunk_size) reduction(+:global_diff_norm)
                 for (int i = 0; i < N; i++) {
                     double diff = tau * (Ax[i] - b[i]);
-                    error_norm_sq += diff * diff;
+                    global_diff_norm += diff * diff;
                 }
             } else if (type == "dynamic") {
-                #pragma omp for schedule(dynamic, chunk_size) reduction(+:error_norm_sq)
+                #pragma omp for schedule(dynamic, chunk_size) reduction(+:global_diff_norm)
                 for (int i = 0; i < N; i++) {
                     double diff = tau * (Ax[i] - b[i]);
-                    error_norm_sq += diff * diff;
+                    global_diff_norm += diff * diff;
                 }
             } else if (type == "guided") {
-                #pragma omp for schedule(guided, chunk_size) reduction(+:error_norm_sq)
+                #pragma omp for schedule(guided, chunk_size) reduction(+:global_diff_norm)
                 for (int i = 0; i < N; i++) {
                     double diff = tau * (Ax[i] - b[i]);
-                    error_norm_sq += diff * diff;
+                    global_diff_norm += diff * diff;
                 }
             }
             
             #pragma omp single
             {
-                if (sqrt(error_norm_sq) < EPSILON) {
+                if (std::sqrt(global_diff_norm) < EPS) {
                     converged = true;
                 }
             }
@@ -179,124 +199,116 @@ void solve_linear_system_v3(const std::vector<double>& A, std::vector<double>& x
 }
 
 
-std::vector<double> run_parallel(std::vector<int>& threads, const std::vector<double> A, std::vector<double> x, std::vector<double>& b)
-{
-    
-    std::vector<double> times;
-
-
-    for (int i = 0; i < threads.size(); i++){
-        auto start = std::chrono::high_resolution_clock::now();
-
-        // solve_linear_system_v1(A, x, b, threads[i]);
-        solve_linear_system_v2(A, x, b, threads[i]);
-
-        auto end = std::chrono::high_resolution_clock::now();
-
-        std::chrono::duration<double> diff = end - start;
-
-        times.push_back(diff.count());
-        
-        std::cout << "Время выполнения для " << threads[i] << " потоков = " << diff.count() << std::endl;
-    }
-
-    
-    return times;
-}
-
-std::vector<double> run_parallel_schedule(std::vector<int>& chunks, const std::vector<double> A, std::vector<double> x, std::vector<double>& b)
-{
-    
-    std::vector<double> times;
-
-
-    for (int i = 0; i < chunks.size(); i++){
-        auto start = std::chrono::high_resolution_clock::now();
-
-        solve_linear_system_v3(A, x, b, 16, "guided", chunks[i]);
-
-        auto end = std::chrono::high_resolution_clock::now();
-
-        std::chrono::duration<double> diff = end - start;
-
-        times.push_back(diff.count());
-        
-        std::cout << "Время выполнения для " << chunks[i] << " чанков = " << diff.count() << std::endl;
-    }
-
-    
-    return times;
+double run_parallel_standard(const TYPE& A, TYPE& x, const TYPE& b, 
+                            int num_threads, 
+                            void (*solver)(const TYPE&, TYPE&, const TYPE&, int)){   
+    auto start = std::chrono::high_resolution_clock::now();
+    solver(A, x, b, num_threads);
+    auto end = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double>(end - start).count();
 }
 
 
-int main(){
+double run_parallel_schedule(const TYPE& A, TYPE& x, const TYPE& b, 
+                            int num_threads, std::string type, int chunk_size){   
+    auto start = std::chrono::high_resolution_clock::now();
+    solve_linear_system_v3(A, x, b, num_threads, type, chunk_size);
+    auto end = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double>(end - start).count();
+}
 
-    std::vector<double> A(N * N), b(N);
-    std::vector<double> x(N, 0.0);
 
+int main(int argc, char** argv){
+    int version = std::atoi(argv[1]);
+
+    TYPE A, b, x(N, 0.0);
+    init(A, b);
+    
     std::vector<int> threads = {1, 2, 4, 7, 8, 16, 20, 40};
-    std::vector<int> chunks = {8, 16, 32, 64};
-
-
-// Инициализация 
-    for (int i = 0; i < N; i++){
-        for (int j = 0; j < N; j++){
-            if (i==j){
-                A[i * N + j] = 2.0;
-            }
-            else {
-                A[i * N + j] = 1.0;
-            }
-        }
-    }
-
-    for (int i = 0; i < N; i++){
-        b[i] = static_cast<double>(N+1);
-    }
-
-    // std::vector<double>times = run_parallel(threads, A, x, b);
-    std::vector<double>times = run_parallel_schedule(chunks, A, x, b);
-
-    std::vector<double> speedup;
-
-
-    // Вариант подсчета и вывода для ускорения
-
-    // for (int i = 1; i < times.size(); i++){
-    //     double su = times[0] / times[i];
-    //     speedup.push_back(su);
-        
-    //     std::cout << "Коэф. ускорения на " << threads[i] << " потоках = " << su << std::endl;
-    // }
-
-    // // Запись результатов в файл results.txt
-    // std::ofstream outfile("results.txt");
-    // if (outfile.is_open()) {
-    //     for (int i = 0; i < threads.size(); i++) {
-    //         outfile << speedup[i] << std::endl;
-    //     }
-    //     outfile.close();
-    //     std::cout << "\nРезультаты успешно записаны в файл results.txt" << std::endl;
-    // } else {
-    //     std::cerr << "Ошибка: не удалось создать файл results.txt" << std::endl;
-    //     return 1;
-    // }
-
+    const std::vector<std::string> schedules = {"static", "dynamic", "guided"};
+    const std::vector<int> chunks = {1, 4, 8, 16, 32, 64, 128, 256};
     
-    //  Вариант вывода для замера времени с разными чанками
+    const int fixed_threads_v3 = 8;
 
-     std::ofstream outfile("results.txt");
-    if (outfile.is_open()) {
-        for (int i = 0; i < chunks.size(); i++) {
-            outfile << times[i] << std::endl;
-        }
-        outfile.close();
-        std::cout << "\nРезультаты успешно записаны в файл results.txt" << std::endl;
-    } else {
-        std::cerr << "Ошибка: не удалось создать файл results.txt" << std::endl;
+    printf("Linear equation (N=%d)\n", N);
+    printf("Selected version: %d\n\n", version);
+
+    printf("=== Замер базового времени (1 поток) ===\n");
+    std::vector<double> serial_runs;
+    serial_runs.reserve(NUM_RUNS);
+    for (int run = 0; run < NUM_RUNS; run++) {
+        std::fill(x.begin(), x.end(), 0.0);
+        double t = run_parallel_standard(A, x, b, 1, solve_linear_system_v1);
+        serial_runs.push_back(t);
+    }
+    double serial_time = std::accumulate(serial_runs.begin(), serial_runs.end(), 0.0) / NUM_RUNS;
+    printf("Базовое время (1 поток): %.6f с\n\n", serial_time);
+
+    std::string result_file = "results" + std::to_string(version) + ".txt";
+    FILE* file = fopen(result_file.c_str(), "w");
+    
+    if (!file) {
+        std::cerr << "Ошибка: не удалось создать файл " << result_file << std::endl;
         return 1;
     }
 
-
+    if (version == 1) {
+        fprintf(file, "Average Results after %d operations:\n", NUM_RUNS);
+        fprintf(file, "%10s %15s %15s %15s\n", "Threads(I)", "Time(sec)(T_i)", "Gain(S)", "Gain Modified(S)");
+        
+        for (int t : threads) {
+            double total_time = 0.0;
+            for (int r = 0; r < NUM_RUNS; r++) {
+                std::fill(x.begin(), x.end(), 0.0);
+                total_time += run_parallel_standard(A, x, b, t, solve_linear_system_v1);
+            }
+            double avg_time = total_time / NUM_RUNS;
+            double gain = serial_time / avg_time;
+            double gain_modified = gain / t;
+            
+            fprintf(file, "%10d %15.6f %15.6f %15.6f\n", t, avg_time, gain, gain_modified);
+            printf("Threads %2d: %.4f sec | Speedup: %.2f\n", t, avg_time, gain);
+        }
+        
+    } else if (version == 2) {
+        fprintf(file, "%10s %15s %15s %15s\n", "Threads(I)", "Time(sec)(T_i)", "Gain(S)", "Gain Modified(S)");
+        
+        for (int t : threads) {
+            double total_time = 0.0;
+            for (int r = 0; r < NUM_RUNS; r++) {
+                std::fill(x.begin(), x.end(), 0.0);
+                total_time += run_parallel_standard(A, x, b, t, solve_linear_system_v2);
+            }
+            double avg_time = total_time / NUM_RUNS;
+            double gain = serial_time / avg_time;
+            double gain_modified = gain / t;
+            
+            fprintf(file, "%10d %15.6f %15.6f %15.6f\n", t, avg_time, gain, gain_modified);
+            printf("Threads %2d: %.4f sec | Speedup: %.2f\n", t, avg_time, gain);
+        }
+        
+    } else if (version == 3) {
+        fprintf(file, "%-10s %15s %15s\n", "Type schedule", "Chunks", "Time");
+        
+        for (const std::string& schedule : schedules) {
+            for (int chunk : chunks) {
+                double total_time = 0.0;
+                
+                for (int r = 0; r < NUM_RUNS; r++) {
+                    std::fill(x.begin(), x.end(), 0.0);
+                    total_time += run_parallel_schedule(A, x, b, fixed_threads_v3, schedule, chunk);
+                }
+                double avg_time = total_time / NUM_RUNS;
+                
+                fprintf(file, "%-10s %15d %15.6f\n", schedule.c_str(), chunk, avg_time);
+                printf("Type: %-8s Chunks: %4d | Time: %.6f sec\n", 
+                       schedule.c_str(), chunk, avg_time);
+            }
+            fprintf(file, "\n");
+            printf("\n");
+        }
+    }
+    
+    fclose(file);
     return 0;
 }
