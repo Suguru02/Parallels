@@ -1,0 +1,29 @@
+Type schedule          Chunks            Time
+static                   1        7.962288
+static                   4        8.342789
+static                   8        8.456287
+static                  16        8.519689
+static                  32        8.666066
+static                  64        8.638726
+static                 128        8.370236
+static                 256        0.001712
+
+dynamic                  1        8.914295
+dynamic                  4        8.080502
+dynamic                  8        7.300521
+dynamic                 16        6.769896
+dynamic                 32        5.534335
+dynamic                 64        0.808141
+dynamic                128        0.034220
+dynamic                256        0.008003
+
+guided                   1        0.512144
+guided                   4        0.057460
+guided                   8        0.037946
+guided                  16        0.022330
+guided                  32        0.015079
+guided                  64        0.010772
+guided                 128        0.004739
+guided                 256        0.003562
+
+
