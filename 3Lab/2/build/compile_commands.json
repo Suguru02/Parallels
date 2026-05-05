@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/home/haruto/Загрузки/Рабочий стол/Паралельки/3Lab/2/build",
+  "command": "/usr/bin/g++   -g -std=gnu++20 -o CMakeFiles/task2.dir/server.cpp.o -c \"/home/haruto/Загрузки/Рабочий стол/Паралельки/3Lab/2/server.cpp\"",
+  "file": "/home/haruto/Загрузки/Рабочий стол/Паралельки/3Lab/2/server.cpp",
+  "output": "CMakeFiles/task2.dir/server.cpp.o"
+}
+]
